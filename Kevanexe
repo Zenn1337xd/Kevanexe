@@ -1,7 +1,7 @@
 -- =======================================================
--- Anh Vanna Exe | Ride a Pet Hub (v2 Fixed ESP)
+-- Anh Vanna Exe | Ride a Pet Hub (v3 - Wild Egg Auto-Steal)
 -- Admin / Owner: Boss_VN
--- Fixed Clean ESP (KG/m) + Spawn Notifications + Auto/Instant Steal
+-- Fixed: Wild-Only Egg Detection (No Base/Owned Eggs) + Fly/TP Steal
 -- =======================================================
 
 local Players = game:GetService("Players")
@@ -11,6 +11,7 @@ local UserInputService = game:GetService("UserInputService")
 local StarterGui = game:GetService("StarterGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TextChatService = game:GetService("TextChatService")
+local TweenService = game:GetService("TweenService")
 local Lighting = game:GetService("Lighting")
 
 local player = Players.LocalPlayer
@@ -38,7 +39,7 @@ local function notify(title, text)
     end)
 end
 
-notify("Anh Vanna Exe", "Clean ESP & Spawn Radar Loaded!")
+notify("Anh Vanna Exe", "Wild Egg Radar & Fly Steal Loaded!")
 
 -- =======================================================
 -- THEME PALETTE
@@ -71,10 +72,12 @@ local function stabilize()
     end
 end
 
--- Base Nest Finder
-local cachedBase = nil
+-- =======================================================
+-- ALL BASES & PLOTS DETECTION (FILTERS OUT OWNED EGGS)
+-- =======================================================
+local cachedMyBase = nil
 local function getMyBasePos()
-    if cachedBase then return cachedBase end
+    if cachedMyBase then return cachedMyBase end
 
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("BasePart") or obj:IsA("Model") then
@@ -82,8 +85,8 @@ local function getMyBasePos()
             if string.find(lower, string.lower(player.Name)) or obj:GetAttribute("Owner") == player.Name then
                 local p = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
                 if p then
-                    cachedBase = p.Position
-                    return cachedBase
+                    cachedMyBase = p.Position
+                    return cachedMyBase
                 end
             end
         end
@@ -93,8 +96,8 @@ local function getMyBasePos()
         if v:IsA("TextLabel") and (string.find(string.lower(v.Text), "safe zone") or string.find(string.lower(v.Text), "nest") or string.find(string.lower(v.Text), "base")) then
             local p = v:FindFirstAncestorWhichIsA("BasePart") or v.Adornee
             if p then
-                cachedBase = p.Position
-                return cachedBase
+                cachedMyBase = p.Position
+                return cachedMyBase
             end
         end
     end
@@ -103,8 +106,54 @@ local function getMyBasePos()
     return spawn and spawn.Position or Vector3.new(0, 10, 0)
 end
 
-local function isInsideMyBase(pos)
-    return (pos - getMyBasePos()).Magnitude <= 35
+-- Collect coordinates of ALL player bases/plots/nests
+local function getAllBasePositions()
+    local positions = {}
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") or obj:IsA("Model") then
+            local lower = string.lower(obj.Name)
+            if string.find(lower, "nest") or string.find(lower, "plot") or string.find(lower, "safe zone") or string.find(lower, "base") then
+                local p = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
+                if p and not string.find(lower, "egg") then
+                    table.insert(positions, p.Position)
+                end
+            end
+        end
+    end
+    return positions
+end
+
+-- STRICT WILD EGG CHECK: Must NOT be owned or inside ANY player's base
+local function isWildUnownedEgg(model, primaryPart)
+    if not model or not primaryPart then return false end
+
+    -- 1. Check if held in character or inventory
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Character and model:IsDescendantOf(plr.Character) then
+            return false
+        end
+        if plr:FindFirstChild("Backpack") and model:IsDescendantOf(plr.Backpack) then
+            return false
+        end
+    end
+
+    -- 2. Check Ownership Attributes & Names
+    if model:GetAttribute("Owner") ~= nil and model:GetAttribute("Owner") ~= "" then
+        return false
+    end
+    if model:GetAttribute("Claimed") == true or model:GetAttribute("Stolen") == true then
+        return false
+    end
+
+    -- 3. Check proximity to ANY base or nest in the server (within 45 studs = owned)
+    local allBases = getAllBasePositions()
+    for _, bPos in ipairs(allBases) do
+        if (primaryPart.Position - bPos).Magnitude <= 45 then
+            return false
+        end
+    end
+
+    return true
 end
 
 -- =======================================================
@@ -123,24 +172,17 @@ local RARITY_RANKS = {
     ["common"]    = {Tier = "Common",    Rank = 1,  Color = Color3.fromRGB(190, 195, 205)}
 }
 
--- De-duplication Filter to prevent screen clutter
-local JUNK_NAMES = {"part", "mesh", "plane", "cube", "hitbox", "union", "cylinder", "stand", "spawner"}
-local function isJunkName(name)
-    local lName = string.lower(name)
-    for _, junk in ipairs(JUNK_NAMES) do
-        if lName == junk then return true end
-    end
-    return false
-end
-
-local function inspectEggModel(model)
+local function inspectWildEggModel(model)
     if not model or not model.Parent then return nil end
-    if Players:GetPlayerFromCharacter(model) then return nil end
 
     local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
-    if not primary or isInsideMyBase(primary.Position) then return nil end
+    if not primary then return nil end
 
-    -- Extract actual KG and display name from overhead labels
+    -- Enforce wild unowned check
+    if not isWildUnownedEgg(model, primary) then
+        return nil
+    end
+
     local eggName = model.Name
     local eggWeight = ""
     local foundText = ""
@@ -151,25 +193,21 @@ local function inspectEggModel(model)
             local lTxt = string.lower(txt)
             foundText = foundText .. " " .. lTxt
 
-            -- Match weights like: 8.73 KG, 73K KG, 370.12K KG
             local kgMatch = string.match(txt, "%d+%.?%d*%s*[kK]?[gG]%s*[kK]?[gG]?")
             if kgMatch and eggWeight == "" then
                 eggWeight = kgMatch
             end
 
-            -- Read egg name if text has Egg in it
             if string.find(lTxt, "egg") and not string.find(lTxt, "distance") then
                 eggName = txt
             end
         end
     end
 
-    -- If no KG text found, read attribute
     if eggWeight == "" then
         eggWeight = model:GetAttribute("Weight") or model:GetAttribute("KG") or "Standard"
     end
 
-    -- Calculate Rarity
     local combined = string.lower(eggName .. " " .. model.Name .. " " .. foundText)
     local foundTier = "Common"
     local foundRank = 1
@@ -196,7 +234,7 @@ local function inspectEggModel(model)
     }
 end
 
-local function scanAllSpawnedEggs()
+local function scanAllWildEggs()
     local results = {}
     local processedModels = {}
     local root = character and character:FindFirstChild("HumanoidRootPart")
@@ -208,7 +246,7 @@ local function scanAllSpawnedEggs()
 
             if string.find(lName, "egg") or hasPrompt then
                 processedModels[obj] = true
-                local data = inspectEggModel(obj)
+                local data = inspectWildEggModel(obj)
                 if data then
                     data.Distance = root and math.floor((root.Position - data.Part.Position).Magnitude * 0.28) or 0
                     table.insert(results, data)
@@ -225,43 +263,157 @@ local function scanAllSpawnedEggs()
 end
 
 -- =======================================================
--- FIXED ESP ENGINE & REAL-TIME SPAWN NOTIFIER
+-- FLY / TELEPORT STEAL ENGINES
+-- =======================================================
+local autoStealEnabled = false
+local instantStealEnabled = false
+local isStealing = false
+
+-- Smooth Fly Teleport to evade anticheat triggers
+local function flyToDestination(targetCFrame, speedMultiplier)
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    stabilize()
+    local distance = (root.Position - targetCFrame.Position).Magnitude
+    local travelTime = math.clamp(distance / (350 * (speedMultiplier or 1)), 0.08, 0.45)
+
+    local tweenInfo = TweenInfo.new(travelTime, Enum.EasingStyle.Linear)
+    local tween = TweenService:Create(root, tweenInfo, {CFrame = targetCFrame})
+    tween:Play()
+    tween.Completed:Wait()
+    stabilize()
+end
+
+-- 1. Fly-Assisted Auto Steal
+local function executeAutoSteal(eggData)
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not root or not eggData.Part or not eggData.Part.Parent then return end
+
+    isStealing = true
+    local home = getMyBasePos()
+
+    notify("🚀 Flying to Egg", string.format("Approaching %s [%s] (%dm away)...", eggData.Name, eggData.Tier, eggData.Distance))
+
+    -- Fly smoothly to the wild egg spawn
+    flyToDestination(eggData.Part.CFrame * CFrame.new(0, 3.2, 0), 1)
+    task.wait(0.1)
+
+    -- Collect prompt / touch
+    local prompt = eggData.Model:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt then
+        if fireproximityprompt then
+            fireproximityprompt(prompt, 0)
+        else
+            prompt:InputHoldBegin()
+            task.wait(0.18)
+            prompt:InputHoldEnd()
+        end
+    end
+    if firetouchinterest then
+        pcall(function()
+            firetouchinterest(root, eggData.Part, 0)
+            task.wait(0.04)
+            firetouchinterest(root, eggData.Part, 1)
+        end)
+    end
+    task.wait(0.25)
+
+    -- Fly safely back to base
+    flyToDestination(CFrame.new(home + Vector3.new(0, 5, 0)), 1.5)
+    notify("Auto Steal Success", "Delivered " .. eggData.Name .. " [" .. eggData.Tier .. "] to Base!")
+    task.wait(0.4)
+    isStealing = false
+end
+
+-- 2. Instant 0-Tick Steal
+local function executeInstantSteal(eggData)
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not root or not eggData.Part or not eggData.Part.Parent then return end
+
+    isStealing = true
+    local home = getMyBasePos()
+
+    stabilize()
+    root.CFrame = eggData.Part.CFrame * CFrame.new(0, 2.5, 0)
+
+    local prompt = eggData.Model:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt and fireproximityprompt then
+        fireproximityprompt(prompt, 0)
+    end
+    if firetouchinterest then
+        pcall(function()
+            firetouchinterest(root, eggData.Part, 0)
+            firetouchinterest(root, eggData.Part, 1)
+        end)
+    end
+
+    root.CFrame = CFrame.new(home + Vector3.new(0, 4, 0))
+    stabilize()
+
+    notify("⚡ INSTANT STEAL", "Snatched " .. eggData.Name .. " (" .. eggData.Tier .. ")!")
+    task.wait(0.2)
+    isStealing = false
+end
+
+-- Steal Controller Loop
+task.spawn(function()
+    while true do
+        if (autoStealEnabled or instantStealEnabled) and not isStealing then
+            local eggs = scanAllWildEggs()
+            for _, egg in ipairs(eggs) do
+                -- Targets Divine, Blackhole, Volcano, Eternal, Secret, Mythic
+                if egg.Rank >= 5 then
+                    if instantStealEnabled then
+                        executeInstantSteal(egg)
+                    else
+                        executeAutoSteal(egg)
+                    end
+                    task.wait(1)
+                    break
+                end
+            end
+        end
+        task.wait(1.2)
+    end
+end)
+
+-- =======================================================
+-- CLEAN ESP & NEW SPAWN NOTIFIER
 -- =======================================================
 local espEnabled = false
 local trackedBillboards = {}
 local knownEggs = {}
 
 local function clearAllESP()
-    for model, item in pairs(trackedBillboards) do
+    for _, item in pairs(trackedBillboards) do
         if item.Billboard and item.Billboard.Parent then item.Billboard:Destroy() end
         if item.Highlight and item.Highlight.Parent then item.Highlight:Destroy() end
     end
     trackedBillboards = {}
 end
 
--- Workspace Scan Loop (Runs every 1.5 seconds to avoid frame rate drops)
 task.spawn(function()
     while true do
         if espEnabled then
-            local eggs = scanAllSpawnedEggs()
+            local eggs = scanAllWildEggs()
             local activeModels = {}
 
             for _, data in ipairs(eggs) do
                 activeModels[data.Model] = true
 
-                -- 1. Spawn Notification Trigger for new eggs
+                -- Trigger notification when a wild egg first spawns
                 if not knownEggs[data.Model] then
                     knownEggs[data.Model] = true
-                    notify("🥚 New Egg Spawned!", string.format("%s [%s]\nWeight: %s | Distance: %dm", data.Name, data.Tier, data.Weight, data.Distance))
+                    notify("🥚 Wild Egg Spawned!", string.format("%s [%s]\nWeight: %s | Distance: %dm", data.Name, data.Tier, data.Weight, data.Distance))
                 end
 
-                -- 2. Build or Update Billboard GUI
                 if not trackedBillboards[data.Model] then
                     local bill = Instance.new("BillboardGui")
-                    bill.Name = "CleanEggESP"
+                    bill.Name = "CleanWildEggESP"
                     bill.Size = UDim2.new(0, 140, 0, 42)
                     bill.AlwaysOnTop = true
-                    bill.MaxDistance = 500 -- Prevents clutter from eggs over 500m away
+                    bill.MaxDistance = 600
                     bill.Adornee = data.Part
 
                     local frame = Instance.new("Frame")
@@ -298,9 +450,8 @@ task.spawn(function()
 
                     bill.Parent = data.Part
 
-                    -- Highlight Aura
                     local hl = Instance.new("Highlight")
-                    hl.Name = "CleanHighlight"
+                    hl.Name = "WildHighlight"
                     hl.FillColor = data.Color
                     hl.OutlineColor = Color3.fromRGB(255, 255, 255)
                     hl.FillTransparency = 0.5
@@ -316,14 +467,12 @@ task.spawn(function()
                         Data = data
                     }
                 else
-                    -- Update existing billboard stats
                     local entry = trackedBillboards[data.Model]
                     entry.Data.Distance = data.Distance
                     entry.BottomText.Text = string.format("⚖️ %s  •  📍 %dm", data.Weight, data.Distance)
                 end
             end
 
-            -- Clean up eggs that were collected or despawned
             for model, item in pairs(trackedBillboards) do
                 if not activeModels[model] or not model.Parent then
                     if item.Billboard then item.Billboard:Destroy() end
@@ -339,7 +488,6 @@ task.spawn(function()
     end
 end)
 
--- Real-time distance updater for active billboards
 RunService.RenderStepped:Connect(function()
     if not espEnabled then return end
     local root = character and character:FindFirstChild("HumanoidRootPart")
@@ -350,104 +498,6 @@ RunService.RenderStepped:Connect(function()
             local dist = math.floor((root.Position - item.Data.Part.Position).Magnitude * 0.28)
             item.BottomText.Text = string.format("⚖️ %s  •  📍 %dm", item.Data.Weight, dist)
         end
-    end
-end)
-
--- =======================================================
--- STEAL ENGINES (AUTO STEAL & INSTANT STEAL)
--- =======================================================
-local autoStealEnabled = false
-local instantStealEnabled = false
-local isStealing = false
-
-local function executeAutoSteal(eggData)
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-    if not root or not eggData.Part or not eggData.Part.Parent then return end
-
-    isStealing = true
-    local home = getMyBasePos()
-    stabilize()
-
-    root.CFrame = eggData.Part.CFrame * CFrame.new(0, 3, 0)
-    stabilize()
-    task.wait(0.12)
-
-    local prompt = eggData.Model:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if prompt then
-        if fireproximityprompt then
-            fireproximityprompt(prompt, 0)
-        else
-            prompt:InputHoldBegin()
-            task.wait(0.18)
-            prompt:InputHoldEnd()
-        end
-    end
-    if firetouchinterest then
-        pcall(function()
-            firetouchinterest(root, eggData.Part, 0)
-            task.wait(0.04)
-            firetouchinterest(root, eggData.Part, 1)
-        end)
-    end
-    task.wait(0.3)
-
-    stabilize()
-    root.CFrame = CFrame.new(home + Vector3.new(0, 5, 0))
-    stabilize()
-    notify("Auto Steal", "Delivered " .. eggData.Name .. " [" .. eggData.Tier .. "] to Base!")
-    task.wait(0.5)
-    isStealing = false
-end
-
-local function executeInstantSteal(eggData)
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-    if not root or not eggData.Part or not eggData.Part.Parent then return end
-
-    isStealing = true
-    local home = getMyBasePos()
-
-    root.AssemblyLinearVelocity = Vector3.zero
-    root.AssemblyAngularVelocity = Vector3.zero
-
-    root.CFrame = eggData.Part.CFrame * CFrame.new(0, 2.5, 0)
-
-    local prompt = eggData.Model:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if prompt and fireproximityprompt then
-        fireproximityprompt(prompt, 0)
-    end
-    if firetouchinterest then
-        pcall(function()
-            firetouchinterest(root, eggData.Part, 0)
-            firetouchinterest(root, eggData.Part, 1)
-        end)
-    end
-
-    root.CFrame = CFrame.new(home + Vector3.new(0, 4, 0))
-    root.AssemblyLinearVelocity = Vector3.zero
-    root.AssemblyAngularVelocity = Vector3.zero
-
-    notify("⚡ INSTANT STEAL", "Snatched " .. eggData.Name .. " (" .. eggData.Tier .. ")!")
-    task.wait(0.2)
-    isStealing = false
-end
-
-task.spawn(function()
-    while true do
-        if (autoStealEnabled or instantStealEnabled) and not isStealing then
-            local eggs = scanAllSpawnedEggs()
-            for _, egg in ipairs(eggs) do
-                if egg.Rank >= 5 and not isInsideMyBase(egg.Part.Position) then
-                    if instantStealEnabled then
-                        executeInstantSteal(egg)
-                    else
-                        executeAutoSteal(egg)
-                    end
-                    task.wait(1)
-                    break
-                end
-            end
-        end
-        task.wait(1.5)
     end
 end)
 
@@ -611,7 +661,7 @@ local titleText = Instance.new("TextLabel")
 titleText.Size = UDim2.new(1, -70, 1, 0)
 titleText.Position = UDim2.new(0, 42, 0, 0)
 titleText.BackgroundTransparency = 1
-titleText.Text = "Anh Vanna Exe | Ride a Pet Hub"
+titleText.Text = "Anh Vanna Exe | Wild Steal Edition"
 titleText.TextColor3 = THEME.TextPrimary
 titleText.Font = Enum.Font.GothamBold
 titleText.TextSize = 12
@@ -797,28 +847,29 @@ end
 -- ADD CONTROLS TO GUI
 -- =======================================================
 
--- 1. FIXED CLEAN ESP EGG (Model-locked, KG, m, Spawn Notifications)
-makeToggle("ESP EGG (Show Spawns + KG + Distance m)", false, function(on)
+-- 1. Wild Egg Auto Steal (Fly Teleport)
+makeToggle("Auto Steal (Fly to Wild Spawned Egg)", false, function(on)
+    autoStealEnabled = on
+    if on then notify("Auto Steal", "Fly Steal active for Wild spawns!") end
+end, "🚀", true)
+
+-- 2. Wild Egg Instant Steal (0-Tick)
+makeToggle("Instant Steal (Snap & Snatch Wild Egg)", false, function(on)
+    instantStealEnabled = on
+    if on then notify("Instant Steal", "0-Tick Wild Snatch active!") end
+end, "⚡", true)
+
+-- 3. Clean ESP (KG + Meters + Notifications)
+makeToggle("ESP EGG (Show Wild Spawns + KG + Distance)", false, function(on)
     espEnabled = on
     if on then
-        notify("ESP Active", "Radar on! Notifications will trigger for new spawns.")
+        notify("ESP Active", "Radar tracking wild eggs only!")
     else
         clearAllESP()
     end
 end, "🥚", true)
 
--- 2. Auto & Instant Steal
-makeToggle("Auto Steal (Divine, Blackhole, Volcano, Eternal)", false, function(on)
-    autoStealEnabled = on
-    if on then notify("Auto Steal", "Active! Hunting rare spawns.") end
-end, "⚡", true)
-
-makeToggle("Instant Steal (Fast 0-Tick Snatch & Return)", false, function(on)
-    instantStealEnabled = on
-    if on then notify("Instant Steal", "Ultra-fast snatch enabled!") end
-end, "🚀", true)
-
--- 3. Speed Boost Slider (1 to 1000)
+-- 4. Speed Boost Slider (1 to 1000)
 makeSliderCard("Speed Boost (WalkSpeed)", currentSpeed, 1, 1000, "spd", {50, 150, 350, 750}, function(val)
     currentSpeed = val
     if speedEnabled then updateSpeed() end
@@ -829,7 +880,7 @@ makeToggle("Enable Speed Boost", false, function(on)
     updateSpeed()
 end, "🏃")
 
--- 4. Infinity Jump (1 to 100)
+-- 5. Infinity Jump (1 to 100)
 makeSliderCard("Infinity Jump Height", jumpHeightValue, 1, 100, "height", {20, 40, 70, 100}, function(val)
     jumpHeightValue = val
 end)
@@ -857,7 +908,7 @@ tpBaseBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- 5. ADMIN PANEL (Boss_VN Only)
+-- 6. ADMIN PANEL (Boss_VN Only)
 local adminCard = Instance.new("Frame")
 adminCard.Size = UDim2.new(0.96, 0, 0, 185)
 adminCard.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
