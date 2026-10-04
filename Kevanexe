@@ -1,7 +1,7 @@
 -- =======================================================
--- Anh Vanna Exe | Ride a Pet Hub (v6 - 1s Fast Steal & Multi-Rarity)
+-- Anh Vanna Exe | Ride a Pet Hub (v7 - Anti AT-3786 Bypass)
 -- Admin / Owner: Boss_VN
--- Fixed: 1-Second Instant Steal + Mount Support + Multi-Rarity ESP (Divine, Blackhole, Volcano, Cherub, Eternal)
+-- Fixed: Code AT-3786 Bypass + 10,000m Multi-Rarity ESP (Divine, Blackhole, Cherub, Volcano, Eternal)
 -- =======================================================
 
 local Players = game:GetService("Players")
@@ -11,6 +11,7 @@ local UserInputService = game:GetService("UserInputService")
 local StarterGui = game:GetService("StarterGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TextChatService = game:GetService("TextChatService")
+local TweenService = game:GetService("TweenService")
 
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -37,10 +38,10 @@ local function notify(title, text)
     end)
 end
 
-notify("Anh Vanna Exe", "1s Fast Steal & Multi-Rarity Radar Active!")
+notify("Anh Vanna Exe", "v7 Loaded | Code AT-3786 Bypass Active!")
 
 -- =======================================================
--- THEME PALETTE
+-- THEME CONFIGURATION
 -- =======================================================
 local THEME = {
     Bg          = Color3.fromRGB(13, 14, 18),
@@ -56,8 +57,8 @@ local THEME = {
     ToggleOn    = Color3.fromRGB(235, 45, 55)
 }
 
--- Anti-Fling & Velocity Wiper
-local function stabilize()
+-- Anti-Fling Physics Stabilizer
+local function wipeVelocities()
     if character and character:FindFirstChild("HumanoidRootPart") then
         local hrp = character.HumanoidRootPart
         local hum = character:FindFirstChildWhichIsA("Humanoid")
@@ -70,32 +71,34 @@ local function stabilize()
 end
 
 -- =======================================================
--- BASE / NEST POSITIONING SYSTEM
+-- BASE & "YOUR RANCH" DETECTOR (ANTI-OWNED FILTER)
 -- =======================================================
 local customBaseCFrame = nil
 
-local function getMyBasePos()
+local function getMyRanchPosition()
     if customBaseCFrame then return customBaseCFrame.Position end
 
+    -- Detect "Your Ranch" sign from screenshot/video
+    for _, lbl in ipairs(workspace:GetDescendants()) do
+        if lbl:IsA("TextLabel") and string.find(string.lower(lbl.Text), "your ranch") then
+            local part = lbl:FindFirstAncestorWhichIsA("BasePart") or lbl.Adornee
+            if part then
+                customBaseCFrame = part.CFrame + Vector3.new(0, 3, 0)
+                return customBaseCFrame.Position
+            end
+        end
+    end
+
+    -- Fallback to player username attribute
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("BasePart") or obj:IsA("Model") then
             local lower = string.lower(obj.Name)
             if string.find(lower, string.lower(player.Name)) or obj:GetAttribute("Owner") == player.Name then
                 local p = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
                 if p then
-                    customBaseCFrame = p.CFrame + Vector3.new(0, 4, 0)
+                    customBaseCFrame = p.CFrame + Vector3.new(0, 3, 0)
                     return customBaseCFrame.Position
                 end
-            end
-        end
-    end
-
-    for _, v in ipairs(workspace:GetDescendants()) do
-        if v:IsA("TextLabel") and (string.find(string.lower(v.Text), "safe zone") or string.find(string.lower(v.Text), "nest") or string.find(string.lower(v.Text), "base")) then
-            local p = v:FindFirstAncestorWhichIsA("BasePart") or v.Adornee
-            if p then
-                customBaseCFrame = p.CFrame + Vector3.new(0, 4, 0)
-                return customBaseCFrame.Position
             end
         end
     end
@@ -104,14 +107,14 @@ local function getMyBasePos()
     return spawn and spawn.Position or Vector3.new(0, 10, 0)
 end
 
--- Collect coordinates of ALL player ranches/nests
+-- All player ranches/bases cache to prevent stealing from other players' bases
 local allBasesCache = {}
-local lastBaseScan = 0
-local function getAllBasePositions()
-    if tick() - lastBaseScan < 4 and #allBasesCache > 0 then
+local lastBaseCheck = 0
+local function getAllBases()
+    if tick() - lastBaseCheck < 4 and #allBasesCache > 0 then
         return allBasesCache
     end
-    lastBaseScan = tick()
+    lastBaseCheck = tick()
     allBasesCache = {}
 
     for _, obj in ipairs(workspace:GetDescendants()) do
@@ -128,9 +131,9 @@ local function getAllBasePositions()
     return allBasesCache
 end
 
--- Teleport Player AND Pet Mount together
+-- Teleport Player + Mounted Pet Simultaneously
 local function teleportPlayerAndMount(targetCFrame)
-    stabilize()
+    wipeVelocities()
     if not character then return end
 
     local hum = character:FindFirstChildWhichIsA("Humanoid")
@@ -147,33 +150,33 @@ local function teleportPlayerAndMount(targetCFrame)
         character.HumanoidRootPart.AssemblyLinearVelocity = Vector3.zero
         character.HumanoidRootPart.AssemblyAngularVelocity = Vector3.zero
     end
-    stabilize()
+    wipeVelocities()
 end
 
 -- =======================================================
 -- COMPREHENSIVE MULTI-RARITY SYSTEM
 -- =======================================================
 local RARITY_RANKS = {
-    ["blackhole"] = {Tier = "Blackhole", Rank = 14, Color = Color3.fromRGB(160, 32, 240)},
-    ["black hole"]= {Tier = "Blackhole", Rank = 14, Color = Color3.fromRGB(160, 32, 240)},
-    ["cherub"]    = {Tier = "Cherub",    Rank = 13, Color = Color3.fromRGB(255, 175, 235)},
-    ["volcano"]   = {Tier = "Volcano",   Rank = 12, Color = Color3.fromRGB(255, 65, 0)},
-    ["valcono"]   = {Tier = "Volcano",   Rank = 12, Color = Color3.fromRGB(255, 65, 0)},
-    ["lava"]      = {Tier = "Volcano",   Rank = 12, Color = Color3.fromRGB(255, 65, 0)},
-    ["divine"]    = {Tier = "Divine",    Rank = 11, Color = Color3.fromRGB(255, 215, 0)},
-    ["eternal"]   = {Tier = "Eternal",   Rank = 10, Color = Color3.fromRGB(255, 60, 180)},
-    ["secret"]    = {Tier = "Secret",    Rank = 9,  Color = Color3.fromRGB(0, 255, 220)},
-    ["ethereal"]  = {Tier = "Ethereal",  Rank = 8,  Color = Color3.fromRGB(255, 120, 20)},
-    ["mythic"]    = {Tier = "Mythic",    Rank = 7,  Color = Color3.fromRGB(180, 70, 255)}
+    ["blackhole"] = {Tier = "Blackhole", Rank = 15, Color = Color3.fromRGB(160, 32, 240)},
+    ["black hole"]= {Tier = "Blackhole", Rank = 15, Color = Color3.fromRGB(160, 32, 240)},
+    ["cherub"]    = {Tier = "Cherub",    Rank = 14, Color = Color3.fromRGB(255, 175, 235)},
+    ["volcano"]   = {Tier = "Volcano",   Rank = 13, Color = Color3.fromRGB(255, 65, 0)},
+    ["valcono"]   = {Tier = "Volcano",   Rank = 13, Color = Color3.fromRGB(255, 65, 0)},
+    ["lava"]      = {Tier = "Volcano",   Rank = 13, Color = Color3.fromRGB(255, 65, 0)},
+    ["divine"]    = {Tier = "Divine",    Rank = 12, Color = Color3.fromRGB(255, 215, 0)},
+    ["eternal"]   = {Tier = "Eternal",   Rank = 11, Color = Color3.fromRGB(255, 60, 180)},
+    ["secret"]    = {Tier = "Secret",    Rank = 10, Color = Color3.fromRGB(0, 255, 220)},
+    ["ethereal"]  = {Tier = "Ethereal",  Rank = 9,  Color = Color3.fromRGB(255, 120, 20)},
+    ["mythic"]    = {Tier = "Mythic",    Rank = 8,  Color = Color3.fromRGB(180, 70, 255)},
+    ["legendary"] = {Tier = "Legendary", Rank = 7,  Color = Color3.fromRGB(255, 160, 20)}
 }
 
--- Common Junk Blacklist
-local JUNK_EGG_NAMES = {"white egg", "tim", "richie", "common egg", "basic egg", "uncommon egg"}
+local COMMON_FILTER = {"white egg", "tim", "richie", "common egg", "basic egg", "uncommon egg"}
 
 local function isUnownedWildEgg(model, primaryPart)
     if not model or not primaryPart or not model.Parent then return false end
 
-    -- Ignore if attached to any player or mount
+    -- Check if held by any character
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr.Character and (model:IsDescendantOf(plr.Character) or primaryPart:IsDescendantOf(plr.Character)) then
             return false
@@ -183,7 +186,7 @@ local function isUnownedWildEgg(model, primaryPart)
         end
     end
 
-    -- Ignore if egg is attached to a weld/mount
+    -- Check if egg is welded to player/mount
     for _, child in ipairs(model:GetDescendants()) do
         if child:IsA("Weld") or child:IsA("WeldConstraint") or child:IsA("Motor6D") then
             local p0, p1 = child.Part0, child.Part1
@@ -201,17 +204,21 @@ local function isUnownedWildEgg(model, primaryPart)
     if owner and owner ~= "" then return false end
     if model:GetAttribute("Claimed") == true or model:GetAttribute("Stolen") == true then return false end
 
-    -- Ignore if in any base or ranch
-    local allBases = getAllBasePositions()
+    -- Strict Ranch Filter: Ignore eggs inside your ranch or other ranches
+    local myBase = getMyRanchPosition()
+    if (primaryPart.Position - myBase).Magnitude <= 55 then
+        return false
+    end
+
+    local allBases = getAllBases()
     for _, bPos in ipairs(allBases) do
-        if (primaryPart.Position - bPos).Magnitude <= 40 then
+        if (primaryPart.Position - bPos).Magnitude <= 45 then
             return false
         end
     end
 
-    -- Ignore if under character/mount
     local root = character and character:FindFirstChild("HumanoidRootPart")
-    if root and (root.Position - primaryPart.Position).Magnitude < 16 then
+    if root and (root.Position - primaryPart.Position).Magnitude < 18 then
         return false
     end
 
@@ -236,8 +243,7 @@ local function inspectRareEgg(model)
             local lTxt = string.lower(txt)
             foundText = foundText .. " " .. lTxt
 
-            -- Matches weights: 8.73 KG, 73K KG, 370.12K KG, 46.53 KG
-            local kgMatch = string.match(txt, "%d+%.?%d*%s*[kKmMbB]?[gG]")
+            local kgMatch = string.match(txt, "%d+%.?%d*%s*[kKmMbBtT]?[gG]")
             if kgMatch and eggWeight == "" then
                 eggWeight = kgMatch
             end
@@ -254,8 +260,8 @@ local function inspectRareEgg(model)
 
     local combined = string.lower(eggName .. " " .. model.Name .. " " .. foundText)
 
-    -- Filter out common base eggs
-    for _, junk in ipairs(JUNK_EGG_NAMES) do
+    -- Filter base common eggs
+    for _, junk in ipairs(COMMON_FILTER) do
         if string.find(combined, junk) and not (
             string.find(combined, "blackhole") or string.find(combined, "cherub") or 
             string.find(combined, "volcano") or string.find(combined, "valcono") or
@@ -266,7 +272,7 @@ local function inspectRareEgg(model)
         end
     end
 
-    -- Match Rarity
+    -- Match targeted rarities
     local foundTier = nil
     local foundRank = 0
     local foundColor = nil
@@ -281,7 +287,6 @@ local function inspectRareEgg(model)
         end
     end
 
-    -- Shows Cherub, Blackhole, Volcano, Divine, Eternal, Secret, Mythic
     if not foundTier or foundRank < 7 then
         return nil
     end
@@ -436,7 +441,6 @@ task.spawn(function()
     end
 end)
 
--- Smooth Distance Refresher
 task.spawn(function()
     while true do
         if espEnabled then
@@ -455,32 +459,55 @@ task.spawn(function()
 end)
 
 -- =======================================================
--- 1-SECOND INSTANT STEAL PIPELINE
+-- ANTI CODE AT-3786 STEAL PIPELINE
 -- =======================================================
 local autoStealEnabled = false
 local isStealing = false
 
-local function executeFastOneSecondSteal(eggData)
+-- Step-segmented flight bypasses the server's single-tick velocity check
+local function segmentedBypassFly(startPos, endPos, totalDistance)
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    -- Scale minimum travel time based on distance (0.8s for 1000m, up to 2.2s for 10000m)
+    local minSafeDuration = math.clamp(totalDistance / 1200, 0.75, 2.4)
+    local steps = 4
+    local stepDuration = minSafeDuration / steps
+
+    for i = 1, steps do
+        local alpha = i / steps
+        local intermediatePos = startPos:Lerp(endPos, alpha)
+        local targetCF = CFrame.new(intermediatePos + Vector3.new(0, math.sin(alpha * math.pi) * 8, 0))
+
+        teleportPlayerAndMount(targetCF)
+        task.wait(stepDuration)
+    end
+
+    teleportPlayerAndMount(CFrame.new(endPos))
+    wipeVelocities()
+end
+
+local function executeSafeBypassSteal(eggData)
     local root = character and character:FindFirstChild("HumanoidRootPart")
     if not root or not eggData.Part or not eggData.Part.Parent then return end
 
     isStealing = true
-    local homePos = customBaseCFrame or CFrame.new(getMyBasePos() + Vector3.new(0, 4, 0))
+    local homePos = customBaseCFrame or CFrame.new(getMyRanchPosition() + Vector3.new(0, 3, 0))
 
-    notify("⚡ 1s Steal", string.format("Snatching [%s] %s (%dm away)...", eggData.Tier, eggData.Name, eggData.Distance))
+    notify("⚡ Bypass Steal", string.format("Approaching [%s] %s (%dm away)...", eggData.Tier, eggData.Name, eggData.Distance))
 
-    -- Step 1: Snap player and mounted pet directly to egg
-    teleportPlayerAndMount(eggData.Part.CFrame * CFrame.new(0, 3, 0))
-    task.wait(0.12)
+    -- Step 1: Teleport cleanly to wild egg
+    teleportPlayerAndMount(eggData.Part.CFrame * CFrame.new(0, 3.2, 0))
+    task.wait(0.15)
 
-    -- Step 2: Fire prompts and interactions
+    -- Step 2: Fire prompts and hold interaction
     local prompt = eggData.Model:FindFirstChildWhichIsA("ProximityPrompt", true)
     if prompt then
         if fireproximityprompt then
             fireproximityprompt(prompt, 0)
         else
             prompt:InputHoldBegin()
-            task.wait(0.15)
+            task.wait(0.2)
             prompt:InputHoldEnd()
         end
     end
@@ -488,18 +515,27 @@ local function executeFastOneSecondSteal(eggData)
     if firetouchinterest then
         pcall(function()
             firetouchinterest(root, eggData.Part, 0)
-            task.wait(0.02)
+            task.wait(0.04)
             firetouchinterest(root, eggData.Part, 1)
         end)
     end
-    task.wait(0.18)
 
-    -- Step 3: Return directly back to base within 1 second
-    teleportPlayerAndMount(homePos)
+    -- Mandatory 0.35s wait so the server validates you picked up the egg
+    task.wait(0.35)
+
+    -- Step 3: Segmented return flight to bypass Code AT-3786
+    local eggPos = eggData.Part.Position
+    local basePos = homePos.Position
+    local dist = (eggPos - basePos).Magnitude
+
+    segmentedBypassFly(eggPos, basePos, dist)
+
+    -- Step 4: Deposit handshake
+    task.wait(0.4)
     removeESPForModel(eggData.Model)
     notify("Auto Steal Success", "Delivered " .. eggData.Name .. " [" .. eggData.Tier .. "] to Base!")
 
-    task.wait(0.4)
+    task.wait(0.5)
     isStealing = false
 end
 
@@ -509,8 +545,8 @@ task.spawn(function()
         if autoStealEnabled and not isStealing then
             local eggs = scanRareEggs()
             for _, egg in ipairs(eggs) do
-                executeFastOneSecondSteal(egg)
-                task.wait(0.8)
+                executeSafeBypassSteal(egg)
+                task.wait(1.2)
                 break
             end
         end
@@ -561,7 +597,7 @@ local function setInfJump(enabled)
 end
 
 -- =======================================================
--- ADMIN SYSTEM (Boss_VN EXCLUSIVE)
+-- ADMIN PANEL (Boss_VN EXCLUSIVE)
 -- =======================================================
 local ADMIN_NAME = "Boss_VN"
 local isUserAdmin = (string.lower(player.Name) == string.lower(ADMIN_NAME))
@@ -678,7 +714,7 @@ local titleText = Instance.new("TextLabel")
 titleText.Size = UDim2.new(1, -70, 1, 0)
 titleText.Position = UDim2.new(0, 42, 0, 0)
 titleText.BackgroundTransparency = 1
-titleText.Text = "Anh Vanna Exe | 1s Fast Steal Hub"
+titleText.Text = "Anh Vanna Exe | Safe Delivery Hub"
 titleText.TextColor3 = THEME.TextPrimary
 titleText.Font = Enum.Font.GothamBold
 titleText.TextSize = 12
@@ -864,19 +900,19 @@ end
 -- ADD FEATURE CONTROLS
 -- =======================================================
 
--- 1. Fast 1-Second Auto Steal
-makeToggle("Auto Steal (Fast 1s Snap & Return to Base)", false, function(on)
+-- 1. Anti-AT-3786 Safe Auto Steal
+makeToggle("Auto Steal (Anti-AT-3786 Bypass)", false, function(on)
     autoStealEnabled = on
     if on then
-        notify("1s Steal Active", "Snatching rare eggs & returning in 1 second!")
+        notify("Safe Steal Active", "Hunting rare eggs up to 10,000m with AT-3786 bypass!")
     end
 end, "⚡", true)
 
--- 2. Set Custom Base Button
+-- 2. Base Location Calibration
 local setBaseBtn = Instance.new("TextButton")
 setBaseBtn.Size = UDim2.new(0.96, 0, 0, 36)
 setBaseBtn.BackgroundColor3 = Color3.fromRGB(35, 120, 240)
-setBaseBtn.Text = "📍 Set Current Position as Base / Home"
+setBaseBtn.Text = "📍 Calibrate Base Location (Stand on Ranch Nest)"
 setBaseBtn.TextColor3 = THEME.TextPrimary
 setBaseBtn.Font = Enum.Font.GothamBold
 setBaseBtn.TextSize = 11
@@ -886,15 +922,15 @@ Instance.new("UICorner", setBaseBtn).CornerRadius = UDim.new(0, 6)
 setBaseBtn.MouseButton1Click:Connect(function()
     if character and character:FindFirstChild("HumanoidRootPart") then
         customBaseCFrame = character.HumanoidRootPart.CFrame
-        notify("Base Saved", "Current location set as home nest!")
+        notify("Base Calibrated", "Current position set as delivery drop zone!")
     end
 end)
 
 -- 3. Multi-Rarity ESP (Divine, Blackhole, Volcano, Cherub, Eternal)
-makeToggle("ESP Multi-Rarity (Divine, Blackhole, Volcano, Cherub)", false, function(on)
+makeToggle("ESP Multi-Rarity (Divine/Blackhole/Volcano/Cherub/Eternal)", false, function(on)
     espEnabled = on
     if on then
-        notify("Multi-Rarity ESP", "Tracking all requested high-tiers up to 10,000m!")
+        notify("10,000m Radar", "Tracking Divine, Blackhole, Volcano, Cherub, Eternal up to 10,000m!")
     else
         clearAllESP()
     end
@@ -924,16 +960,16 @@ end, "🦘")
 local tpBaseBtn = Instance.new("TextButton")
 tpBaseBtn.Size = UDim2.new(0.96, 0, 0, 34)
 tpBaseBtn.BackgroundColor3 = THEME.Card
-tpBaseBtn.Text = "🏠 Teleport Back to Saved Base Nest"
+tpBaseBtn.Text = "🏠 Teleport Back to Ranch Nest"
 tpBaseBtn.TextColor3 = THEME.TextPrimary
 tpBaseBtn.Font = Enum.Font.GothamBold
 tpBaseBtn.TextSize = 11
 tpBaseBtn.Parent = scrollList
 Instance.new("UICorner", tpBaseBtn).CornerRadius = UDim.new(0, 6)
 tpBaseBtn.MouseButton1Click:Connect(function()
-    local home = customBaseCFrame or CFrame.new(getMyBasePos() + Vector3.new(0, 4, 0))
+    local home = customBaseCFrame or CFrame.new(getMyRanchPosition() + Vector3.new(0, 3, 0))
     teleportPlayerAndMount(home)
-    notify("Home", "Returned to base nest!")
+    notify("Home", "Returned to ranch!")
 end)
 
 -- 6. ADMIN PANEL (Boss_VN Only)
