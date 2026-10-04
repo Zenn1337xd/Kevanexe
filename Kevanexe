@@ -1,0 +1,892 @@
+-- =======================================================
+-- Anh Vanna Exe | Ride a Pet & Steal Hub
+-- Creator / Admin: Boss_VN
+-- Auto & Instant Steal + 1-1000 Speed + Egg ESP (KG/m) + Admin Kick
+-- =======================================================
+
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local StarterGui = game:GetService("StarterGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TextChatService = game:GetService("TextChatService")
+local Lighting = game:GetService("Lighting")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+player.CharacterAdded:Connect(function(char)
+    character = char
+end)
+
+-- Safe UI Container Setup
+local targetParent = nil
+pcall(function() targetParent = CoreGui end)
+if not targetParent then targetParent = player:WaitForChild("PlayerGui") end
+
+if targetParent:FindFirstChild("AnhVannaExeHub") then
+    targetParent.AnhVannaExeHub:Destroy()
+end
+
+local function notify(title, text)
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = title,
+            Text = text,
+            Duration = 3
+        })
+    end)
+end
+
+notify("Anh Vanna Exe", "Loaded successfully! Welcome.")
+
+-- =======================================================
+-- COLOR PALETTE & STYLES
+-- =======================================================
+local THEME = {
+    Bg          = Color3.fromRGB(13, 14, 18),
+    Sidebar     = Color3.fromRGB(20, 21, 28),
+    Card        = Color3.fromRGB(25, 27, 36),
+    CardHeader  = Color3.fromRGB(31, 34, 46),
+    Accent      = Color3.fromRGB(235, 45, 55),
+    Gold        = Color3.fromRGB(255, 215, 0),
+    AdminBlue   = Color3.fromRGB(0, 160, 255),
+    Border      = Color3.fromRGB(38, 41, 54),
+    TextPrimary = Color3.fromRGB(245, 245, 250),
+    TextMuted   = Color3.fromRGB(150, 155, 170),
+    ToggleOff   = Color3.fromRGB(38, 41, 54),
+    ToggleOn    = Color3.fromRGB(235, 45, 55)
+}
+
+-- Anti-Fling & Physics Stabilizer
+local function stabilize()
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        local hrp = character.HumanoidRootPart
+        local hum = character:FindFirstChildWhichIsA("Humanoid")
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        if hum then
+            hum.PlatformStand = false
+            hum:ChangeState(Enum.HumanoidStateType.Running)
+        end
+    end
+end
+
+-- Base / Nest Detection
+local cachedBase = nil
+local function getMyBasePos()
+    if cachedBase then return cachedBase end
+
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") or obj:IsA("Model") then
+            local lower = string.lower(obj.Name)
+            if string.find(lower, string.lower(player.Name)) or obj:GetAttribute("Owner") == player.Name then
+                local p = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
+                if p then
+                    cachedBase = p.Position
+                    return cachedBase
+                end
+            end
+        end
+    end
+
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v:IsA("TextLabel") and (string.find(string.lower(v.Text), "safe zone") or string.find(string.lower(v.Text), "nest") or string.find(string.lower(v.Text), "base")) then
+            local p = v:FindFirstAncestorWhichIsA("BasePart") or v.Adornee
+            if p then
+                cachedBase = p.Position
+                return cachedBase
+            end
+        end
+    end
+
+    local spawn = workspace:FindFirstChildWhichIsA("SpawnLocation", true)
+    return spawn and spawn.Position or Vector3.new(0, 10, 0)
+end
+
+local function isInsideMyBase(pos)
+    return (pos - getMyBasePos()).Magnitude <= 40
+end
+
+-- =======================================================
+-- RARITY RANKS (BLACKHOLE, VOLCANO, DIVINE, ETERNAL, ETC)
+-- =======================================================
+local RARITY_RANKS = {
+    ["blackhole"] = {Tier = "Blackhole", Rank = 11, Color = Color3.fromRGB(140, 0, 255)},
+    ["volcano"]   = {Tier = "Volcano",   Rank = 10, Color = Color3.fromRGB(255, 60, 0)},
+    ["secret"]    = {Tier = "Secret",    Rank = 9,  Color = Color3.fromRGB(0, 255, 210)},
+    ["eternal"]   = {Tier = "Eternal",   Rank = 8,  Color = Color3.fromRGB(255, 60, 180)},
+    ["divine"]    = {Tier = "Divine",    Rank = 7,  Color = Color3.fromRGB(255, 215, 0)},
+    ["ethereal"]  = {Tier = "Ethereal",  Rank = 6,  Color = Color3.fromRGB(255, 120, 20)},
+    ["mythic"]    = {Tier = "Mythic",    Rank = 5,  Color = Color3.fromRGB(180, 70, 255)},
+    ["legendary"] = {Tier = "Legendary", Rank = 4,  Color = Color3.fromRGB(255, 160, 20)},
+    ["rare"]      = {Tier = "Rare",      Rank = 3,  Color = Color3.fromRGB(50, 150, 255)},
+    ["common"]    = {Tier = "Common",    Rank = 1,  Color = Color3.fromRGB(200, 200, 200)}
+}
+
+local function inspectEgg(obj)
+    local rawName = obj.Name
+    local lowerName = string.lower(rawName)
+    local isEgg = string.find(lowerName, "egg") or string.find(lowerName, "pet")
+    local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+    local promptText = prompt and string.lower((prompt.ObjectText or "") .. " " .. (prompt.ActionText or "")) or ""
+
+    if not isEgg and (string.find(promptText, "egg") or string.find(promptText, "steal") or string.find(promptText, "grab")) then
+        isEgg = true
+        if prompt.ObjectText and prompt.ObjectText ~= "" then
+            rawName = prompt.ObjectText
+            lowerName = string.lower(rawName)
+        end
+    end
+
+    local weightStr = "N/A"
+    local billboardText = ""
+    for _, lbl in ipairs(obj:GetDescendants()) do
+        if lbl:IsA("TextLabel") and lbl.Text ~= "" then
+            local textLower = string.lower(lbl.Text)
+            billboardText = billboardText .. " " .. textLower
+            if string.find(textLower, "kg") or string.find(textLower, "lb") then
+                weightStr = string.match(lbl.Text, "%d+%.?%d*%s*[kK][gG]") or lbl.Text
+            end
+            if string.find(textLower, "egg") then
+                isEgg = true
+                rawName = lbl.Text
+            end
+        end
+    end
+
+    if not isEgg then return nil end
+
+    -- Detect Rarity
+    local foundTier = "Common"
+    local foundRank = 1
+    local foundColor = Color3.fromRGB(200, 200, 200)
+
+    local combined = lowerName .. " " .. promptText .. " " .. billboardText
+    for key, data in pairs(RARITY_RANKS) do
+        if string.find(combined, key) then
+            if data.Rank > foundRank then
+                foundTier = data.Tier
+                foundRank = data.Rank
+                foundColor = data.Color
+            end
+        end
+    end
+
+    local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
+    if not part or isInsideMyBase(part.Position) then return nil end
+
+    return {
+        Object = obj,
+        Part = part,
+        Name = rawName,
+        Weight = weightStr,
+        Tier = foundTier,
+        Rank = foundRank,
+        Color = foundColor
+    }
+end
+
+local function scanAllEggs()
+    local results = {}
+    local seen = {}
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+
+    for _, item in ipairs(workspace:GetDescendants()) do
+        if item:IsA("Model") or (item:IsA("BasePart") and string.find(string.lower(item.Name), "egg")) then
+            local data = inspectEgg(item)
+            if data and not seen[data.Part] then
+                seen[data.Part] = true
+                data.Distance = root and math.floor((root.Position - data.Part.Position).Magnitude * 0.28) or 0
+                table.insert(results, data)
+            end
+        end
+    end
+
+    table.sort(results, function(a, b)
+        if a.Rank ~= b.Rank then return a.Rank > b.Rank end
+        return a.Distance < b.Distance
+    end)
+    return results
+end
+
+-- =======================================================
+-- STEAL PIPELINES (AUTO STEAL & INSTANT STEAL)
+-- =======================================================
+local autoStealEnabled = false
+local instantStealEnabled = false
+local isStealing = false
+
+-- 1. Standard Auto Steal
+local function executeAutoSteal(eggData)
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not root or not eggData.Part or not eggData.Part.Parent then return end
+
+    isStealing = true
+    local home = getMyBasePos()
+    stabilize()
+
+    root.CFrame = eggData.Part.CFrame * CFrame.new(0, 3, 0)
+    stabilize()
+    task.wait(0.12)
+
+    local prompt = eggData.Object:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt then
+        if fireproximityprompt then
+            fireproximityprompt(prompt, 0)
+        else
+            prompt:InputHoldBegin()
+            task.wait(0.18)
+            prompt:InputHoldEnd()
+        end
+    end
+    if firetouchinterest then
+        pcall(function()
+            firetouchinterest(root, eggData.Part, 0)
+            task.wait(0.04)
+            firetouchinterest(root, eggData.Part, 1)
+        end)
+    end
+    task.wait(0.3)
+
+    stabilize()
+    root.CFrame = CFrame.new(home + Vector3.new(0, 5, 0))
+    stabilize()
+    notify("Auto Steal", "Delivered " .. eggData.Name .. " [" .. eggData.Tier .. "] to Base!")
+    task.wait(0.5)
+    isStealing = false
+end
+
+-- 2. Instant Steal (0-Tick Snatch)
+local function executeInstantSteal(eggData)
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not root or not eggData.Part or not eggData.Part.Parent then return end
+
+    isStealing = true
+    local home = getMyBasePos()
+
+    -- Zero velocity to prevent physics flings
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+
+    -- Instant Snap
+    root.CFrame = eggData.Part.CFrame * CFrame.new(0, 2.5, 0)
+
+    local prompt = eggData.Object:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt and fireproximityprompt then
+        fireproximityprompt(prompt, 0)
+    end
+    if firetouchinterest then
+        pcall(function()
+            firetouchinterest(root, eggData.Part, 0)
+            firetouchinterest(root, eggData.Part, 1)
+        end)
+    end
+
+    -- Return instantly without waiting
+    root.CFrame = CFrame.new(home + Vector3.new(0, 4, 0))
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+
+    notify("⚡ INSTANT STEAL", "Snatched " .. eggData.Name .. " (" .. eggData.Tier .. ")!")
+    task.wait(0.2)
+    isStealing = false
+end
+
+-- Auto Steal / Instant Steal Controller Loop
+task.spawn(function()
+    while true do
+        if (autoStealEnabled or instantStealEnabled) and not isStealing then
+            local eggs = scanAllEggs()
+            for _, egg in ipairs(eggs) do
+                -- Target high rarities: Blackhole, Volcano, Secret, Eternal, Divine, etc.
+                if egg.Rank >= 5 and not isInsideMyBase(egg.Part.Position) then
+                    if instantStealEnabled then
+                        executeInstantSteal(egg)
+                    else
+                        executeAutoSteal(egg)
+                    end
+                    task.wait(1)
+                    break
+                end
+            end
+        end
+        task.wait(1.5)
+    end
+end)
+
+-- =======================================================
+-- SPEED BOOST (1-1000 SAFE CRASH-PROOF SLIDER)
+-- =======================================================
+local speedEnabled = false
+local currentSpeed = 100
+local speedConn = nil
+
+local function updateSpeed()
+    if speedConn then speedConn:Disconnect() speedConn = nil end
+    if speedEnabled then
+        speedConn = RunService.Heartbeat:Connect(function()
+            if character and character:FindFirstChildWhichIsA("Humanoid") then
+                local hum = character:FindFirstChildWhichIsA("Humanoid")
+                hum.WalkSpeed = math.clamp(currentSpeed, 16, 1000)
+            end
+        end)
+    else
+        if character and character:FindFirstChildWhichIsA("Humanoid") then
+            character:FindFirstChildWhichIsA("Humanoid").WalkSpeed = 16
+        end
+    end
+end
+
+-- =======================================================
+-- INFINITE JUMP (1-100 HEIGHT ADJUSTABLE)
+-- =======================================================
+local infJumpEnabled = false
+local jumpHeightValue = 50 -- 1 to 100
+local jumpConn = nil
+
+local function setInfJump(enabled)
+    infJumpEnabled = enabled
+    if jumpConn then jumpConn:Disconnect() jumpConn = nil end
+
+    if enabled then
+        jumpConn = UserInputService.JumpRequest:Connect(function()
+            if character and character:FindFirstChildWhichIsA("Humanoid") and character:FindFirstChild("HumanoidRootPart") then
+                local root = character.HumanoidRootPart
+                local hum = character:FindFirstChildWhichIsA("Humanoid")
+                -- Safe custom jump impulse (Scale 1-100)
+                root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, jumpHeightValue * 2.2, root.AssemblyLinearVelocity.Z)
+                hum:ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+        end)
+    end
+end
+
+-- =======================================================
+-- ESP EGG (NAME + KG + RARITY + DISTANCE M)
+-- =======================================================
+local espEnabled = false
+local activeVisuals = {}
+
+local function clearESP()
+    for _, v in pairs(activeVisuals) do
+        if v.Highlight and v.Highlight.Parent then v.Highlight:Destroy() end
+        if v.Billboard and v.Billboard.Parent then v.Billboard:Destroy() end
+    end
+    activeVisuals = {}
+end
+
+RunService.RenderStepped:Connect(function()
+    if not espEnabled then
+        clearESP()
+        return
+    end
+
+    local eggs = scanAllEggs()
+    local validParts = {}
+
+    for _, data in ipairs(eggs) do
+        validParts[data.Part] = true
+
+        if not activeVisuals[data.Part] then
+            local hl = Instance.new("Highlight")
+            hl.Name = "EggHighlight"
+            hl.FillColor = data.Color
+            hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+            hl.FillTransparency = 0.25
+            hl.OutlineTransparency = 0
+            hl.Adornee = data.Part
+            hl.Parent = data.Part
+
+            local bill = Instance.new("BillboardGui")
+            bill.Name = "EggTracker"
+            bill.Size = UDim2.new(0, 160, 0, 48)
+            bill.AlwaysOnTop = true
+            bill.Adornee = data.Part
+
+            local lbl = Instance.new("TextLabel")
+            lbl.Size = UDim2.new(1, 0, 1, 0)
+            lbl.BackgroundTransparency = 1
+            lbl.TextColor3 = data.Color
+            lbl.TextStrokeTransparency = 0
+            lbl.Font = Enum.Font.GothamBold
+            lbl.TextSize = 10
+            lbl.Parent = bill
+            bill.Parent = data.Part
+
+            activeVisuals[data.Part] = {Highlight = hl, Billboard = bill, Label = lbl, Data = data}
+        else
+            -- Update live distance and KG stats
+            local entry = activeVisuals[data.Part]
+            if entry and entry.Label then
+                entry.Label.Text = string.format("🥚 %s\n[%s] • %s\nDistance: %dm", data.Name, data.Tier, data.Weight, data.Distance)
+            end
+        end
+    end
+
+    -- Cleanup missing eggs
+    for part, v in pairs(activeVisuals) do
+        if not validParts[part] or not part.Parent then
+            if v.Highlight then v.Highlight:Destroy() end
+            if v.Billboard then v.Billboard:Destroy() end
+            activeVisuals[part] = nil
+        end
+    end
+end)
+
+-- =======================================================
+-- ADMIN SYSTEM (Boss_VN EXCLUSIVE & REMOTE KICK LISTENER)
+-- =======================================================
+local ADMIN_NAME = "Boss_VN"
+local isUserAdmin = (string.lower(player.Name) == string.lower(ADMIN_NAME))
+
+-- Remote Kick Communication via TextChatService / ReplicatedStorage
+local function listenForAdminKicks()
+    -- Modern TextChat listener
+    pcall(function()
+        TextChatService.MessageReceived:Connect(function(msg)
+            local text = msg.Text
+            if string.find(text, "!!ANH_VANNA_KICK!!") then
+                local target, reason = string.match(text, "!!ANH_VANNA_KICK!!%s*(%S+)%s*(.*)")
+                if target and string.lower(target) == string.lower(player.Name) then
+                    player:Kick("\n[Anh Vanna Exe Admin System]\nYou were kicked by Admin " .. ADMIN_NAME .. "\nReason: " .. (reason ~= "" and reason or "Rule violation / Abuse."))
+                end
+            end
+        end)
+    end)
+end
+listenForAdminKicks()
+
+local function sendAdminKick(targetUsername, kickReason)
+    if not isUserAdmin then
+        notify("Access Denied", "Only Boss_VN is authorized to use the Admin Panel!")
+        return
+    end
+
+    if not targetUsername or string.gsub(targetUsername, "%s+", "") == "" then
+        notify("Admin Error", "Please provide a valid username.")
+        return
+    end
+
+    local commandMessage = string.format("!!ANH_VANNA_KICK!! %s %s", targetUsername, kickReason or "Abuse")
+
+    -- Broadcast to trigger kick on user's client
+    pcall(function()
+        local general = TextChatService.TextChannels:FindFirstChild("RBXGeneral")
+        if general then general:SendAsync(commandMessage) end
+    end)
+    pcall(function()
+        local chat = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
+        if chat and chat:FindFirstChild("SayMessageRequest") then
+            chat.SayMessageRequest:FireServer(commandMessage, "All")
+        end
+    end)
+
+    notify("Admin Kick Sent", "Kick command executed on: " .. targetUsername)
+end
+
+-- =======================================================
+-- USER INTERFACE (Anh Vanna Exe)
+-- =======================================================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AnhVannaExeHub"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = targetParent
+
+-- Floating Logo Button (Image Badge)
+local openBtn = Instance.new("ImageButton")
+openBtn.Size = UDim2.new(0, 52, 0, 52)
+openBtn.Position = UDim2.new(0.02, 0, 0.45, 0)
+openBtn.BackgroundColor3 = THEME.Sidebar
+openBtn.Image = "rbxassetid://135805218765413" -- Fallback / Decal ID placeholder
+openBtn.ScaleType = Enum.ScaleType.Fit
+openBtn.Active = true
+openBtn.Draggable = true
+openBtn.Parent = screenGui
+Instance.new("UICorner", openBtn).CornerRadius = UDim.new(1, 0)
+
+local openStroke = Instance.new("UIStroke", openBtn)
+openStroke.Color = THEME.Accent
+openStroke.Thickness = 2.2
+
+local badgeText = Instance.new("TextLabel")
+badgeText.Size = UDim2.new(1, 0, 1, 0)
+badgeText.BackgroundTransparency = 1
+badgeText.Text = "AV"
+badgeText.TextColor3 = THEME.Accent
+badgeText.Font = Enum.Font.FredokaOne
+badgeText.TextSize = 20
+badgeText.Parent = openBtn
+
+-- Main GUI Window
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 390, 0, 480)
+mainFrame.Position = UDim2.new(0.5, -195, 0.28, -240)
+mainFrame.BackgroundColor3 = THEME.Bg
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 10)
+
+local mStroke = Instance.new("UIStroke", mainFrame)
+mStroke.Color = THEME.Border
+mStroke.Thickness = 1.2
+
+openBtn.MouseButton1Click:Connect(function()
+    mainFrame.Visible = not mainFrame.Visible
+end)
+
+-- Header Bar
+local topBar = Instance.new("Frame")
+topBar.Size = UDim2.new(1, 0, 0, 36)
+topBar.BackgroundColor3 = THEME.Sidebar
+topBar.BorderSizePixel = 0
+topBar.Parent = mainFrame
+Instance.new("UICorner", topBar).CornerRadius = UDim.new(0, 10)
+
+local titleLogo = Instance.new("TextLabel")
+titleLogo.Size = UDim2.new(0, 26, 0, 26)
+titleLogo.Position = UDim2.new(0, 8, 0, 5)
+titleLogo.BackgroundColor3 = THEME.Accent
+titleLogo.Text = "AV"
+titleLogo.TextColor3 = THEME.TextPrimary
+titleLogo.Font = Enum.Font.FredokaOne
+titleLogo.TextSize = 13
+titleLogo.Parent = topBar
+Instance.new("UICorner", titleLogo).CornerRadius = UDim.new(0, 4)
+
+local titleText = Instance.new("TextLabel")
+titleText.Size = UDim2.new(1, -70, 1, 0)
+titleText.Position = UDim2.new(0, 42, 0, 0)
+titleText.BackgroundTransparency = 1
+titleText.Text = "Anh Vanna Exe | Ride a Pet Hub"
+titleText.TextColor3 = THEME.TextPrimary
+titleText.Font = Enum.Font.GothamBold
+titleText.TextSize = 12
+titleText.TextXAlignment = Enum.TextXAlignment.Left
+titleText.Parent = topBar
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 22, 0, 22)
+closeBtn.Position = UDim2.new(1, -30, 0, 7)
+closeBtn.BackgroundColor3 = THEME.Accent
+closeBtn.Text = "X"
+closeBtn.TextColor3 = THEME.TextPrimary
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 11
+closeBtn.Parent = topBar
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 4)
+closeBtn.MouseButton1Click:Connect(function() mainFrame.Visible = false end)
+
+-- Content Scroll Area
+local scrollList = Instance.new("ScrollingFrame")
+scrollList.Size = UDim2.new(1, -16, 1, -44)
+scrollList.Position = UDim2.new(0, 8, 0, 40)
+scrollList.BackgroundTransparency = 1
+scrollList.ScrollBarThickness = 3
+scrollList.ScrollBarImageColor3 = THEME.Accent
+scrollList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scrollList.CanvasSize = UDim2.new(0, 0, 0, 0)
+scrollList.Parent = mainFrame
+
+local layout = Instance.new("UIListLayout", scrollList)
+layout.Padding = UDim.new(0, 6)
+layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+-- Helpers
+local function makeToggle(labelText, defaultState, callback, icon, isGold)
+    local state = defaultState
+    local card = Instance.new("Frame")
+    card.Size = UDim2.new(0.96, 0, 0, 40)
+    card.BackgroundColor3 = THEME.Card
+    card.Parent = scrollList
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
+
+    if isGold then
+        local st = Instance.new("UIStroke", card)
+        st.Color = THEME.Gold
+        st.Thickness = 1.2
+    end
+
+    local offset = 10
+    if icon then
+        local ic = Instance.new("TextLabel")
+        ic.Size = UDim2.new(0, 24, 1, 0)
+        ic.Position = UDim2.new(0, 8, 0, 0)
+        ic.BackgroundTransparency = 1
+        ic.Text = icon
+        ic.TextSize = 14
+        ic.Parent = card
+        offset = 34
+    end
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.65, 0, 1, 0)
+    lbl.Position = UDim2.new(0, offset, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = labelText
+    lbl.TextColor3 = isGold and THEME.Gold or THEME.TextPrimary
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.TextSize = 10
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = card
+
+    local switch = Instance.new("TextButton")
+    switch.Size = UDim2.new(0, 42, 0, 22)
+    switch.Position = UDim2.new(1, -50, 0.5, -11)
+    switch.BackgroundColor3 = state and (isGold and THEME.Gold or THEME.ToggleOn) or THEME.ToggleOff
+    switch.Text = ""
+    switch.AutoButtonColor = false
+    switch.Parent = card
+    Instance.new("UICorner", switch).CornerRadius = UDim.new(1, 0)
+
+    local dot = Instance.new("Frame")
+    dot.Size = UDim2.new(0, 16, 0, 16)
+    dot.Position = state and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)
+    dot.BackgroundColor3 = THEME.TextPrimary
+    dot.Parent = switch
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+    switch.MouseButton1Click:Connect(function()
+        state = not state
+        switch.BackgroundColor3 = state and (isGold and THEME.Gold or THEME.ToggleOn) or THEME.ToggleOff
+        dot.Position = state and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)
+        callback(state)
+    end)
+    return card
+end
+
+local function makeSliderCard(titlePrefix, currentVal, minVal, maxVal, unit, presets, onUpdate)
+    local card = Instance.new("Frame")
+    card.Size = UDim2.new(0.96, 0, 0, 68)
+    card.BackgroundColor3 = THEME.Card
+    card.Parent = scrollList
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -16, 0, 18)
+    title.Position = UDim2.new(0, 8, 0, 4)
+    title.BackgroundTransparency = 1
+    title.Text = string.format("%s: %d %s", titlePrefix, currentVal, unit)
+    title.TextColor3 = THEME.Accent
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 11
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = card
+
+    local track = Instance.new("TextButton")
+    track.Size = UDim2.new(0.94, 0, 0, 6)
+    track.Position = UDim2.new(0.03, 0, 0, 26)
+    track.BackgroundColor3 = THEME.ToggleOff
+    track.Text = ""
+    track.AutoButtonColor = false
+    track.Parent = card
+    Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+
+    local fill = Instance.new("Frame")
+    local initRatio = math.clamp((currentVal - minVal) / (maxVal - minVal), 0, 1)
+    fill.Size = UDim2.new(initRatio, 0, 1, 0)
+    fill.BackgroundColor3 = THEME.Accent
+    fill.BorderSizePixel = 0
+    fill.Parent = track
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+    local function applyValue(val)
+        currentVal = math.clamp(math.floor(val), minVal, maxVal)
+        local ratio = (currentVal - minVal) / (maxVal - minVal)
+        fill.Size = UDim2.new(ratio, 0, 1, 0)
+        title.Text = string.format("%s: %d %s", titlePrefix, currentVal, unit)
+        onUpdate(currentVal)
+    end
+
+    local dragging = false
+    track.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            local rel = math.clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+            applyValue(minVal + (rel * (maxVal - minVal)))
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local rel = math.clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+            applyValue(minVal + (rel * (maxVal - minVal)))
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+
+    local pRow = Instance.new("Frame")
+    pRow.Size = UDim2.new(0.94, 0, 0, 22)
+    pRow.Position = UDim2.new(0.03, 0, 0, 38)
+    pRow.BackgroundTransparency = 1
+    pRow.Parent = card
+
+    local count = #presets
+    for i, pVal in ipairs(presets) do
+        local pBtn = Instance.new("TextButton")
+        pBtn.Size = UDim2.new((1 / count) - 0.02, 0, 1, 0)
+        pBtn.Position = UDim2.new((i - 1) * (1 / count) + 0.01, 0, 0, 0)
+        pBtn.BackgroundColor3 = Color3.fromRGB(34, 37, 48)
+        pBtn.Text = tostring(pVal)
+        pBtn.TextColor3 = THEME.TextMuted
+        pBtn.Font = Enum.Font.GothamBold
+        pBtn.TextSize = 10
+        pBtn.Parent = pRow
+        Instance.new("UICorner", pBtn).CornerRadius = UDim.new(0, 4)
+        pBtn.MouseButton1Click:Connect(function()
+            applyValue(pVal)
+        end)
+    end
+end
+
+-- =======================================================
+-- ADD FEATURES TO GUI
+-- =======================================================
+
+-- 1. Auto Steal & Instant Steal Toggles
+makeToggle("Auto Steal (Divine, Blackhole, Volcano, Eternal)", false, function(on)
+    autoStealEnabled = on
+    if on then notify("Auto Steal", "Active! Hunting rare spawns.") end
+end, "🥚", true)
+
+makeToggle("Instant Steal (Fast 0-Tick Snatch & Return)", false, function(on)
+    instantStealEnabled = on
+    if on then notify("Instant Steal", "Ultra-fast snatch enabled!") end
+end, "⚡", true)
+
+-- 2. Speed Boost Slider (1 to 1000)
+makeSliderCard("Speed Boost (WalkSpeed)", currentSpeed, 1, 1000, "spd", {50, 150, 350, 750}, function(val)
+    currentSpeed = val
+    if speedEnabled then updateSpeed() end
+end)
+
+makeToggle("Enable Speed Boost", false, function(on)
+    speedEnabled = on
+    updateSpeed()
+end, "🏃")
+
+-- 3. Infinity Jump Slider (1 to 100)
+makeSliderCard("Infinity Jump Height", jumpHeightValue, 1, 100, "height", {20, 40, 70, 100}, function(val)
+    jumpHeightValue = val
+end)
+
+makeToggle("Infinity Jump On/Off", false, function(on)
+    setInfJump(on)
+end, "🦘")
+
+-- 4. ESP EGG (KG + Name + Rarity + Meters)
+makeToggle("ESP EGG (Show All Spawns + KG + Distance m)", false, function(on)
+    espEnabled = on
+    if on then notify("ESP Egg", "Visual radar active!") else clearESP() end
+end, "👁️")
+
+-- Base Teleport Button
+local tpBaseBtn = Instance.new("TextButton")
+tpBaseBtn.Size = UDim2.new(0.96, 0, 0, 34)
+tpBaseBtn.BackgroundColor3 = THEME.Card
+tpBaseBtn.Text = "🏠 Teleport Back to Safe Base / Nest"
+tpBaseBtn.TextColor3 = THEME.TextPrimary
+tpBaseBtn.Font = Enum.Font.GothamBold
+tpBaseBtn.TextSize = 11
+tpBaseBtn.Parent = scrollList
+Instance.new("UICorner", tpBaseBtn).CornerRadius = UDim.new(0, 6)
+tpBaseBtn.MouseButton1Click:Connect(function()
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        stabilize()
+        character.HumanoidRootPart.CFrame = CFrame.new(getMyBasePos() + Vector3.new(0, 5, 0))
+        stabilize()
+        notify("Base", "Safely returned home!")
+    end
+end)
+
+-- =======================================================
+-- 5. ADMIN PANEL (Boss_VN ONLY)
+-- =======================================================
+local adminCard = Instance.new("Frame")
+adminCard.Size = UDim2.new(0.96, 0, 0, 185)
+adminCard.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
+adminCard.Parent = scrollList
+Instance.new("UICorner", adminCard).CornerRadius = UDim.new(0, 6)
+
+local aStroke = Instance.new("UIStroke", adminCard)
+aStroke.Color = isUserAdmin and THEME.AdminBlue or Color3.fromRGB(70, 70, 80)
+aStroke.Thickness = 1.2
+
+local aHeader = Instance.new("TextLabel")
+aHeader.Size = UDim2.new(1, -16, 0, 20)
+aHeader.Position = UDim2.new(0, 8, 0, 4)
+aHeader.BackgroundTransparency = 1
+aHeader.Text = isUserAdmin and "👑 Admin Panel (Logged in: Boss_VN)" or "🔒 Admin Panel (Restricted to Boss_VN)"
+aHeader.TextColor3 = isUserAdmin and THEME.AdminBlue or Color3.fromRGB(255, 75, 75)
+aHeader.Font = Enum.Font.GothamBold
+aHeader.TextSize = 11
+aHeader.TextXAlignment = Enum.TextXAlignment.Left
+aHeader.Parent = adminCard
+
+-- Online Players Summary
+local onlineLbl = Instance.new("TextLabel")
+onlineLbl.Size = UDim2.new(1, -16, 0, 16)
+onlineLbl.Position = UDim2.new(0, 8, 0, 24)
+onlineLbl.BackgroundTransparency = 1
+onlineLbl.Text = "Players in Server: " .. #Players:GetPlayers()
+onlineLbl.TextColor3 = THEME.TextMuted
+onlineLbl.Font = Enum.Font.Gotham
+onlineLbl.TextSize = 10
+onlineLbl.TextXAlignment = Enum.TextXAlignment.Left
+onlineLbl.Parent = adminCard
+
+-- Kick User Inputs
+local userInput = Instance.new("TextBox")
+userInput.Size = UDim2.new(0.94, 0, 0, 30)
+userInput.Position = UDim2.new(0.03, 0, 0, 46)
+userInput.BackgroundColor3 = Color3.fromRGB(15, 16, 22)
+userInput.Text = ""
+userInput.PlaceholderText = "Username to kick..."
+userInput.PlaceholderColor3 = Color3.fromRGB(110, 115, 130)
+userInput.TextColor3 = THEME.TextPrimary
+userInput.Font = Enum.Font.GothamMedium
+userInput.TextSize = 11
+userInput.ClearTextOnFocus = false
+userInput.Parent = adminCard
+Instance.new("UICorner", userInput).CornerRadius = UDim.new(0, 4)
+
+local reasonInput = Instance.new("TextBox")
+reasonInput.Size = UDim2.new(0.94, 0, 0, 30)
+reasonInput.Position = UDim2.new(0.03, 0, 0, 82)
+reasonInput.BackgroundColor3 = Color3.fromRGB(15, 16, 22)
+reasonInput.Text = ""
+reasonInput.PlaceholderText = "Reason for kick (e.g. Script Abusing)..."
+reasonInput.PlaceholderColor3 = Color3.fromRGB(110, 115, 130)
+reasonInput.TextColor3 = THEME.TextPrimary
+reasonInput.Font = Enum.Font.GothamMedium
+reasonInput.TextSize = 11
+reasonInput.ClearTextOnFocus = false
+reasonInput.Parent = adminCard
+Instance.new("UICorner", reasonInput).CornerRadius = UDim.new(0, 4)
+
+-- Kick Execution Button
+local kickBtn = Instance.new("TextButton")
+kickBtn.Size = UDim2.new(0.94, 0, 0, 32)
+kickBtn.Position = UDim2.new(0.03, 0, 0, 120)
+kickBtn.BackgroundColor3 = isUserAdmin and Color3.fromRGB(220, 40, 50) or Color3.fromRGB(50, 52, 65)
+kickBtn.Text = isUserAdmin and "🚫 Execute Kick User" or "🔒 Admin Access Required"
+kickBtn.TextColor3 = THEME.TextPrimary
+kickBtn.Font = Enum.Font.GothamBold
+kickBtn.TextSize = 11
+kickBtn.Parent = adminCard
+Instance.new("UICorner", kickBtn).CornerRadius = UDim.new(0, 4)
+
+kickBtn.MouseButton1Click:Connect(function()
+    if isUserAdmin then
+        sendAdminKick(userInput.Text, reasonInput.Text)
+        userInput.Text = ""
+        reasonInput.Text = ""
+    else
+        notify("Denied", "You are not Boss_VN!")
+    end
+end)
